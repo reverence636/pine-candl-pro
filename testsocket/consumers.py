@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 import threading
 import time
@@ -72,6 +73,7 @@ class PracticeConsumer(AsyncWebsocketConsumer):
 
 
 class PracticeWorker(AsyncConsumer):
+
     @staticmethod
     def save_player_data():
         User = get_user_model()
@@ -151,6 +153,7 @@ class PracticeWorker(AsyncConsumer):
 
     async def send_init_packet(self, player_packet):
         current_map_name = player_packet["position"]["map"]
+        print(current_map_name)
         map_data = self.maps[current_map_name]
         channel = player_packet["channel"]
         player_list = [x for x in self.players.values() if x["position"]["map"] == current_map_name]
@@ -158,15 +161,10 @@ class PracticeWorker(AsyncConsumer):
                                                 "d": {"map": map_data, "players": player_list,
                                                       "time": self.hour_of_day}})
         await self.channel_layer.send(channel, {"type": "sendMessage", "p": "self", "d": player_packet})
-
-    async def broadcast_new_player(self, player_packet):
-        current_map_name = player_packet["position"]["map"]
         await self.channel_layer.group_send(current_map_name,
                                             {"type": "sendMessage", "p": "player", "d": player_packet})
-
-    async def add_player_to_map_channel(self, player_packet):
-        current_map_name = player_packet["position"]["map"]
-        await self.channel_layer.group_add(current_map_name, player_packet["channel"])
+        await self.channel_layer.group_add(current_map_name, channel)
+        print(player_packet["position"]["map"])
 
     async def broadcast_player_disconnect(self, player_id):
         current_map_name = self.players[player_id]["position"]["map"]
@@ -223,8 +221,6 @@ class PracticeWorker(AsyncConsumer):
                             print("player")
                             if self.events[player][event]["id"] not in self.players.keys():
                                 await self.send_init_packet(self.events[player][event])
-                                await self.broadcast_new_player(self.events[player][event])
-                                await self.add_player_to_map_channel(self.events[player][event])
                                 self.players[player] = self.events[player][event]
                             else:
                                 print("player already joined")
@@ -286,6 +282,33 @@ class PracticeWorker(AsyncConsumer):
                         case "setsprite":
                             await self.set_sprite(player, self.events[player][event])
 
+                        case "teleport":
+                            portal_name = self.events[player][event]
+                            portal = [x for x in
+                                      [x for x in self.maps[self.players[player]["position"]["map"]]["layers"] if
+                                       x["name"] == "Portals"][0]["objects"] if x["name"] == portal_name][0]
+                            portal_pos = (portal["x"], portal["y"])
+                            player_pos = (self.players[player]["position"]["x"], self.players[player]["position"]["y"])
+                            distance = math.dist(portal_pos, player_pos)
+                            if distance < 20:
+                                for x in portal["properties"]:
+                                    match x["name"]:
+                                        case "dest_map":
+                                            dest_map = x["value"]
+                                        case "dest_x":
+                                            dest_x = x["value"]
+                                        case "dest_y":
+                                            dest_y = x["value"]
+                                await self.channel_layer.group_discard(self.players[player]["position"]["map"], self.players[player]["channel"])
+                                await self.broadcast_player_disconnect(player)
+                                self.players[player]["position"]["map"]=dest_map
+                                self.players[player]["position"]["x"]=dest_x
+                                self.players[player]["position"]["y"]=dest_y
+                                print("Map", dest_map)
+                                print(self.players[player]["position"]["map"])
+                                await self.send_init_packet(self.players[player])
+                                print(self.players[player]["position"]["map"])
+                                self.events[player] = {}
                         case _:
                             print("Received unknown packet", event)
 

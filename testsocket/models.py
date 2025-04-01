@@ -41,3 +41,5 @@ class User(AbstractUser):
     posDirection = models.CharField(max_length=10, default="up")
     sprite = models.IntegerField(default=1)
     itemInHand = models.CharField(max_length=10,default="weapon")
+
+
